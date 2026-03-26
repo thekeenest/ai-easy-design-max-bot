@@ -1,0 +1,28 @@
+# MAX messenger bot dependencies
+# Install with: pip install -r requirements.txt
+
+# MAX Bot API (official Python library)
+maxapi[webhook]>=0.1.0
+
+# Async HTTP client (for downloading media from MAX CDN)
+aiohttp>=3.9.0
+
+# ── Shared with parent project (all AI backends) ──────────────────────────────
+# These should already be installed if parent project is set up.
+# Listed here for a self-contained fresh environment.
+
+# fal.ai — Flux / Kling / Runway / NanoBanana
+fal-client>=0.5.0
+
+# OpenAI — GPT Images, Whisper, GPT-4 Vision
+openai>=1.40.0
+
+# Google Generative AI — VEO3
+google-generativeai>=0.8.0
+
+# Suno music generation API
+# (no PyPI package — uses internal utils_suno.py + aiohttp)
+
+# Misc
+python-dotenv>=1.0.0
+Pillow>=10.0.0
