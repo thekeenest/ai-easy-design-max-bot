@@ -5,11 +5,11 @@ Jobs are queued in DB; background workers in main.py send the results.
 from maxapi import Bot
 
 from config import config
-from database import Database
+from database_pg import AsyncDatabase
 from keyboards.menu import get_cancel_kb, get_photo_menu_kb
 from state_manager import state_mgr
 
-db = Database()
+db = AsyncDatabase()
 
 STATES = {
     "seedream_prompt": "generate:seedream_prompt",
@@ -18,7 +18,7 @@ STATES = {
 
 
 async def show_seedream_start(chat_id: int, user_id: int, bot: Bot):
-    balance = db.get_balance(user_id)
+    balance = await db.get_balance(user_id)
     cost = config.GENERATE_IMAGE_COST
     if balance < cost:
         await bot.send_message(
@@ -49,15 +49,15 @@ async def show_seedream_start(chat_id: int, user_id: int, bot: Bot):
 async def process_seedream_prompt(chat_id: int, user_id: int, username: str, prompt: str, bot: Bot):
     state_mgr.clear(user_id)
     cost = config.GENERATE_IMAGE_COST
-    if not db.check_and_deduct(user_id, cost, config.ADMIN_ID):
+    if not await db.check_and_deduct(user_id, cost, config.ADMIN_ID):
         await bot.send_message(
             chat_id=chat_id,
             text=f"❌ Недостаточно токенов (нужно {cost}).",
             attachments=get_photo_menu_kb(),
         )
         return
-    job_id = db.add_seedream_job(user_id=user_id, username=username, prompt=prompt)
-    balance = db.get_balance(user_id)
+    job_id = await db.add_seedream_job(user_id=user_id, username=username, prompt=prompt)
+    balance = await db.get_balance(user_id)
     await bot.send_message(
         chat_id=chat_id,
         text=(
@@ -71,7 +71,7 @@ async def process_seedream_prompt(chat_id: int, user_id: int, username: str, pro
 
 
 async def show_gpt_image_start(chat_id: int, user_id: int, bot: Bot):
-    balance = db.get_balance(user_id)
+    balance = await db.get_balance(user_id)
     cost = config.GENERATE_IMAGE_COST
     if balance < cost:
         await bot.send_message(
@@ -97,14 +97,14 @@ async def show_gpt_image_start(chat_id: int, user_id: int, bot: Bot):
 async def process_gpt_image_prompt(chat_id: int, user_id: int, username: str, prompt: str, bot: Bot):
     state_mgr.clear(user_id)
     cost = config.GENERATE_IMAGE_COST
-    if not db.check_and_deduct(user_id, cost, config.ADMIN_ID):
+    if not await db.check_and_deduct(user_id, cost, config.ADMIN_ID):
         await bot.send_message(chat_id=chat_id, text=f"❌ Недостаточно токенов (нужно {cost}).")
         return
-    db.add_openai_image_job(
+    await db.add_openai_image_job(
         user_id=user_id, username=username, prompt=prompt,
         num_images=1, job_type="general"
     )
-    balance = db.get_balance(user_id)
+    balance = await db.get_balance(user_id)
     await bot.send_message(
         chat_id=chat_id,
         text=(

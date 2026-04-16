@@ -7,11 +7,11 @@ import aiohttp
 from maxapi import Bot
 
 from config import config
-from database import Database
+from database_pg import AsyncDatabase
 from keyboards.menu import get_cancel_kb, get_flux_kontext_count_kb, get_photo_menu_kb
 from state_manager import state_mgr
 
-db = Database()
+db = AsyncDatabase()
 
 STATES = {
     "count": "flux:count",
@@ -21,7 +21,7 @@ STATES = {
 
 
 async def show_flux_start(chat_id: int, user_id: int, bot: Bot):
-    balance = db.get_balance(user_id)
+    balance = await db.get_balance(user_id)
     cost = config.FLUX_KONTEXT_COST
     if balance < cost:
         await bot.send_message(
@@ -94,14 +94,14 @@ async def handle_flux_prompt(chat_id: int, user_id: int, username: str, prompt: 
         await bot.send_message(chat_id=chat_id, text="❌ Фото не найдены.")
         return
     cost = config.FLUX_KONTEXT_COST
-    if not db.check_and_deduct(user_id, cost, config.ADMIN_ID):
+    if not await db.check_and_deduct(user_id, cost, config.ADMIN_ID):
         await bot.send_message(chat_id=chat_id, text=f"❌ Недостаточно токенов (нужно {cost}).")
         return
-    db.add_flux_kontext_job(
+    await db.add_flux_kontext_job(
         user_id=user_id, username=username,
         prompt=prompt, image_paths=",".join(photos),
     )
-    balance_after = db.get_balance(user_id)
+    balance_after = await db.get_balance(user_id)
     await bot.send_message(
         chat_id=chat_id,
         text=(

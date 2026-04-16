@@ -37,7 +37,7 @@ from maxapi.types import CallbackButton, ButtonsPayload
 from maxapi.utils.inline_keyboard import InlineKeyboardBuilder
 
 from config import MAX_BOT_TOKEN, config
-from database import Database
+from database_pg import AsyncDatabase
 from state_manager import state_mgr
 
 # ── Handlers ──────────────────────────────────────────────────────────────────
@@ -108,16 +108,21 @@ async def send_audio_url(chat_id: int, url: str, caption: str = "", filename: st
 
 async def process_seedream_job_queue():
     from utils_seedream import generate_seedream_image
-    db = Database()
+    from utils_alerts import is_fal_balance_error, alert_fal_balance
+    db = AsyncDatabase()
     while True:
         try:
-            jobs = db.get_pending_seedream_jobs(limit=1)
+            jobs = await db.get_pending_seedream_jobs(limit=1)
             for job in jobs:
                 try:
-                    image_path, seed, error = await generate_seedream_image(job["prompt"])
+                    image_path, seed, error, cdn_url = await generate_seedream_image(job["prompt"])
                     if error or not image_path:
-                        db.update_seedream_job_status(job["id"], "failed", error_message=error or "failed")
-                        await bot.send_message(chat_id=job["user_id"], text=f"⚠️ Ошибка Seedream: {error}")
+                        await db.update_seedream_job_status(job["id"], "failed", error_message=error or "failed")
+                        if is_fal_balance_error(str(error or "")):
+                            asyncio.create_task(alert_fal_balance(job["user_id"], str(error or "")))
+                            await bot.send_message(chat_id=job["user_id"], text="🔧 Технические неполадки, скоро все исправим! Ваши токены не списались зря, они в безопасности.")
+                        else:
+                            await bot.send_message(chat_id=job["user_id"], text=f"⚠️ Ошибка Seedream: {error}")
                         continue
                     with open(image_path, "rb") as f:
                         img_bytes = f.read()
@@ -127,10 +132,10 @@ async def process_seedream_job_queue():
                     )
                     recreate_kb = [ButtonsPayload(buttons=[[CallbackButton(text="🔄 Повторить", payload=f"regen:seedream:{job['id']}")]]).pack()]
                     await send_photo_bytes(job["user_id"], img_bytes, caption, recreate_kb, "seedream.jpg")
-                    db.update_seedream_job_status(job["id"], "completed", image_path=image_path, seed=seed)
-                    db.record_tool_usage(job["user_id"], job["username"], "seedream")
+                    await db.update_seedream_job_status(job["id"], "completed", image_path=image_path, seed=seed)
+                    await db.record_tool_usage(job["user_id"], job["username"], "seedream")
                 except Exception as e:
-                    db.update_seedream_job_status(job["id"], "failed", error_message=str(e))
+                    await db.update_seedream_job_status(job["id"], "failed", error_message=str(e))
                     logger.error(f"Seedream job {job['id']} failed: {e}")
         except Exception as e:
             logger.error(f"Seedream queue error: {e}")
@@ -138,15 +143,15 @@ async def process_seedream_job_queue():
 
 
 async def process_openai_image_job_queue():
-    db = Database()
+    db = AsyncDatabase()
     while True:
         try:
-            pending = db.get_pending_openai_image_jobs()
+            pending = await db.get_pending_openai_image_jobs()
             tasks = []
             for job in pending:
                 if job["status"] == "processing" or len(tasks) >= 3:
                     continue
-                db.update_openai_image_job_status(job["id"], "processing")
+                await db.update_openai_image_job_status(job["id"], "processing")
                 tasks.append(asyncio.create_task(
                     _process_openai_image_job(db, job)
                 ))
@@ -157,64 +162,66 @@ async def process_openai_image_job_queue():
         await asyncio.sleep(5)
 
 
-async def _process_openai_image_job(db: Database, job: dict):
+async def _process_openai_image_job(db: AsyncDatabase, job: dict):
+    from utils_alerts import is_fal_balance_error, alert_fal_balance
     try:
         from utils import generate_openai_image
-        loop = asyncio.get_event_loop()
-        image_paths, error = await loop.run_in_executor(
-            None,
-            lambda: asyncio.run(generate_openai_image(
-                prompt=job["prompt"],
-                num_images=job.get("num_images", 1),
-                job_type=job.get("job_type", "general"),
-                product_images=job.get("product_images"),
-            ))
+        image_paths, error = await generate_openai_image(
+            prompt=job["prompt"],
+            num_images=job.get("num_images", 1),
+            job_type=job.get("job_type", "general"),
+            product_images=job.get("product_images"),
         )
         if error or not image_paths:
-            db.update_openai_image_job_status(job["id"], "failed", error_message=error or "failed")
-            await bot.send_message(chat_id=job["user_id"], text=f"⚠️ Ошибка GPT Images: {error}")
+            await db.update_openai_image_job_status(job["id"], "failed", error_message=error or "failed")
+            if is_fal_balance_error(str(error or "")):
+                asyncio.create_task(alert_fal_balance(job["user_id"], str(error or "")))
+                await bot.send_message(chat_id=job["user_id"], text="🔧 Технические неполадки, скоро все исправим! Ваши токены не списались зря, они в безопасности.")
+            else:
+                await bot.send_message(chat_id=job["user_id"], text=f"⚠️ Ошибка GPT Images: {error}")
             return
         for i, path in enumerate(image_paths):
             with open(path, "rb") as f:
                 img_bytes = f.read()
             caption = f"🖼 *GPT Image {i+1}/{len(image_paths)}*\n\n_{job['prompt'][:150]}_"
             await send_photo_bytes(job["user_id"], img_bytes, caption, filename=f"gpt_image_{i}.jpg")
-        db.update_openai_image_job_status(job["id"], "completed")
-        db.record_tool_usage(job["user_id"], job.get("username", ""), "gpt_image")
+        await db.update_openai_image_job_status(job["id"], "completed")
+        await db.record_tool_usage(job["user_id"], job.get("username", ""), "gpt_image")
     except Exception as e:
-        db.update_openai_image_job_status(job["id"], "failed", error_message=str(e))
+        await db.update_openai_image_job_status(job["id"], "failed", error_message=str(e))
         logger.error(f"OpenAI image job {job['id']} failed: {e}")
 
 
 async def process_video_job_queue():
     """Kling video queue."""
-    db = Database()
+    from utils_alerts import is_fal_balance_error, alert_fal_balance
+    db = AsyncDatabase()
     while True:
         try:
-            jobs = db.get_pending_video_jobs(limit=1)
+            jobs = await db.get_pending_video_jobs(limit=1)
             for job in jobs:
                 try:
-                    db.update_video_job_status(job["id"], "processing")
+                    await db.update_video_job_status(job["id"], "processing")
                     from utils_fal import generate_kling_video
-                    loop = asyncio.get_event_loop()
-                    video_url, error = await loop.run_in_executor(
-                        None,
-                        lambda: asyncio.run(generate_kling_video(
-                            image_path=job["image_path"],
-                            prompt=job["prompt"],
-                            duration=job.get("duration", 5),
-                        ))
+                    video_url, error = await generate_kling_video(
+                        image_path=job["image_path"],
+                        prompt=job["prompt"],
+                        duration=job.get("duration", 5),
                     )
                     if error or not video_url:
-                        db.update_video_job_status(job["id"], "failed", error_message=error or "failed")
-                        await bot.send_message(chat_id=job["user_id"], text=f"⚠️ Ошибка Kling: {error}")
+                        await db.update_video_job_status(job["id"], "failed", error_message=error or "failed")
+                        if is_fal_balance_error(str(error or "")):
+                            asyncio.create_task(alert_fal_balance(job["user_id"], str(error or "")))
+                            await bot.send_message(chat_id=job["user_id"], text="🔧 Технические неполадки, скоро все исправим! Ваши токены не списались зря, они в безопасности.")
+                        else:
+                            await bot.send_message(chat_id=job["user_id"], text=f"⚠️ Ошибка Kling: {error}")
                         continue
                     caption = f"🎬 *Kling видео готово!*\n\n_{job['prompt'][:150]}_"
                     await send_video_url(job["user_id"], video_url, caption)
-                    db.update_video_job_status(job["id"], "completed")
-                    db.record_tool_usage(job["user_id"], job.get("username", ""), "kling")
+                    await db.update_video_job_status(job["id"], "completed")
+                    await db.record_tool_usage(job["user_id"], job.get("username", ""), "kling")
                 except Exception as e:
-                    db.update_video_job_status(job["id"], "failed", error_message=str(e))
+                    await db.update_video_job_status(job["id"], "failed", error_message=str(e))
                     logger.error(f"Kling job {job['id']} failed: {e}")
         except Exception as e:
             logger.error(f"Video queue error: {e}")
@@ -222,33 +229,34 @@ async def process_video_job_queue():
 
 
 async def process_runway_video_job_queue():
-    db = Database()
+    from utils_alerts import is_fal_balance_error, alert_fal_balance
+    db = AsyncDatabase()
     while True:
         try:
-            jobs = db.get_pending_runway_video_jobs(limit=1)
+            jobs = await db.get_pending_runway_video_jobs(limit=1)
             for job in jobs:
                 try:
-                    db.update_runway_video_job_status(job["id"], "processing")
+                    await db.update_runway_video_job_status(job["id"], "processing")
                     from utils_fal import generate_runway_video
-                    loop = asyncio.get_event_loop()
-                    video_url, error = await loop.run_in_executor(
-                        None,
-                        lambda: asyncio.run(generate_runway_video(
-                            image_path=job["image_path"],
-                            prompt=job["prompt"],
-                            aspect_ratio=job.get("aspect_ratio", "16:9"),
-                        ))
+                    video_url, error = await generate_runway_video(
+                        image_path=job["image_path"],
+                        prompt=job["prompt"],
+                        aspect_ratio=job.get("aspect_ratio", "16:9"),
                     )
                     if error or not video_url:
-                        db.update_runway_video_job_status(job["id"], "failed", error_message=error or "failed")
-                        await bot.send_message(chat_id=job["user_id"], text=f"⚠️ Ошибка Runway: {error}")
+                        await db.update_runway_video_job_status(job["id"], "failed", error_message=error or "failed")
+                        if is_fal_balance_error(str(error or "")):
+                            asyncio.create_task(alert_fal_balance(job["user_id"], str(error or "")))
+                            await bot.send_message(chat_id=job["user_id"], text="🔧 Технические неполадки, скоро все исправим! Ваши токены не списались зря, они в безопасности.")
+                        else:
+                            await bot.send_message(chat_id=job["user_id"], text=f"⚠️ Ошибка Runway: {error}")
                         continue
                     caption = f"🎬 *Runway видео готово!*"
                     await send_video_url(job["user_id"], video_url, caption)
-                    db.update_runway_video_job_status(job["id"], "completed")
-                    db.record_tool_usage(job["user_id"], job.get("username", ""), "runway")
+                    await db.update_runway_video_job_status(job["id"], "completed")
+                    await db.record_tool_usage(job["user_id"], job.get("username", ""), "runway")
                 except Exception as e:
-                    db.update_runway_video_job_status(job["id"], "failed", error_message=str(e))
+                    await db.update_runway_video_job_status(job["id"], "failed", error_message=str(e))
                     logger.error(f"Runway job {job['id']} failed: {e}")
         except Exception as e:
             logger.error(f"Runway queue error: {e}")
@@ -256,25 +264,25 @@ async def process_runway_video_job_queue():
 
 
 async def process_veo3_video_job_queue():
-    db = Database()
+    db = AsyncDatabase()
     while True:
         try:
-            jobs = db.get_pending_veo3_video_jobs(limit=1)
+            jobs = await db.get_pending_veo3_video_jobs(limit=1)
             for job in jobs:
                 try:
-                    db.update_veo3_video_job_status(job["id"], "processing")
+                    await db.update_veo3_video_job_status(job["id"], "processing")
                     from utils_veo3 import generate_veo3_video
                     video_url, error = await generate_veo3_video(job["prompt"])
                     if error or not video_url:
-                        db.update_veo3_video_job_status(job["id"], "failed", error_message=error or "failed")
+                        await db.update_veo3_video_job_status(job["id"], "failed", error_message=error or "failed")
                         await bot.send_message(chat_id=job["user_id"], text=f"⚠️ Ошибка VEO3: {error}")
                         continue
                     caption = f"🌟 *VEO3 видео готово!*\n\n_{job['prompt'][:150]}_"
                     await send_video_url(job["user_id"], video_url, caption)
-                    db.update_veo3_video_job_status(job["id"], "completed")
-                    db.record_tool_usage(job["user_id"], job.get("username", ""), "veo3")
+                    await db.update_veo3_video_job_status(job["id"], "completed")
+                    await db.record_tool_usage(job["user_id"], job.get("username", ""), "veo3")
                 except Exception as e:
-                    db.update_veo3_video_job_status(job["id"], "failed", error_message=str(e))
+                    await db.update_veo3_video_job_status(job["id"], "failed", error_message=str(e))
                     logger.error(f"VEO3 job {job['id']} failed: {e}")
         except Exception as e:
             logger.error(f"VEO3 queue error: {e}")
@@ -282,36 +290,37 @@ async def process_veo3_video_job_queue():
 
 
 async def process_flux_kontext_job_queue():
-    db = Database()
+    from utils_alerts import is_fal_balance_error, alert_fal_balance
+    db = AsyncDatabase()
     while True:
         try:
-            jobs = db.get_pending_flux_kontext_jobs(limit=1)
+            jobs = await db.get_pending_flux_kontext_jobs(limit=1)
             for job in jobs:
                 try:
-                    db.update_flux_kontext_job_status(job["id"], "processing")
+                    await db.update_flux_kontext_job_status(job["id"], "processing")
                     image_urls = [u.strip() for u in (job.get("image_paths") or "").split(",") if u.strip()]
                     from utils_fal import generate_flux_kontext
-                    loop = asyncio.get_event_loop()
-                    result_url, error = await loop.run_in_executor(
-                        None,
-                        lambda: asyncio.run(generate_flux_kontext(
-                            image_urls=image_urls,
-                            prompt=job["prompt"],
-                        ))
+                    result_url, error = await generate_flux_kontext(
+                        image_urls=image_urls,
+                        prompt=job["prompt"],
                     )
                     if error or not result_url:
-                        db.update_flux_kontext_job_status(job["id"], "failed", error_message=error or "failed")
-                        await bot.send_message(chat_id=job["user_id"], text=f"⚠️ Ошибка Flux Kontext: {error}")
+                        await db.update_flux_kontext_job_status(job["id"], "failed", error_message=error or "failed")
+                        if is_fal_balance_error(str(error or "")):
+                            asyncio.create_task(alert_fal_balance(job["user_id"], str(error or "")))
+                            await bot.send_message(chat_id=job["user_id"], text="🔧 Технические неполадки, скоро все исправим! Ваши токены не списались зря, они в безопасности.")
+                        else:
+                            await bot.send_message(chat_id=job["user_id"], text=f"⚠️ Ошибка Flux Kontext: {error}")
                         continue
                     async with aiohttp.ClientSession() as session:
                         async with session.get(result_url) as resp:
                             img_bytes = await resp.read()
                     caption = f"🌀 *Flux Kontext готово!*\n\n_{job['prompt'][:150]}_"
                     await send_photo_bytes(job["user_id"], img_bytes, caption, filename="flux_kontext.jpg")
-                    db.update_flux_kontext_job_status(job["id"], "completed")
-                    db.record_tool_usage(job["user_id"], job.get("username", ""), "flux_kontext")
+                    await db.update_flux_kontext_job_status(job["id"], "completed")
+                    await db.record_tool_usage(job["user_id"], job.get("username", ""), "flux_kontext")
                 except Exception as e:
-                    db.update_flux_kontext_job_status(job["id"], "failed", error_message=str(e))
+                    await db.update_flux_kontext_job_status(job["id"], "failed", error_message=str(e))
                     logger.error(f"Flux Kontext job {job['id']} failed: {e}")
         except Exception as e:
             logger.error(f"Flux Kontext queue error: {e}")
@@ -319,35 +328,36 @@ async def process_flux_kontext_job_queue():
 
 
 async def process_nano_banana_job_queue():
-    db = Database()
+    from utils_alerts import is_fal_balance_error, alert_fal_balance
+    db = AsyncDatabase()
     while True:
         try:
-            jobs = db.get_pending_nano_banana_jobs(limit=1)
+            jobs = await db.get_pending_nano_banana_jobs(limit=1)
             for job in jobs:
                 try:
-                    db.update_nano_banana_job_status(job["id"], "processing")
+                    await db.update_nano_banana_job_status(job["id"], "processing")
                     from utils_nano_banana import edit_image_nano_banana
-                    loop = asyncio.get_event_loop()
-                    result_url, error = await loop.run_in_executor(
-                        None,
-                        lambda: asyncio.run(edit_image_nano_banana(
-                            image_path=job["image_path"],
-                            prompt=job["prompt"],
-                        ))
+                    result_url, error = await edit_image_nano_banana(
+                        image_path=job["image_path"],
+                        prompt=job["prompt"],
                     )
                     if error or not result_url:
-                        db.update_nano_banana_job_status(job["id"], "failed", error_message=error or "failed")
-                        await bot.send_message(chat_id=job["user_id"], text=f"⚠️ Ошибка NanoBanana: {error}")
+                        await db.update_nano_banana_job_status(job["id"], "failed", error_message=error or "failed")
+                        if is_fal_balance_error(str(error or "")):
+                            asyncio.create_task(alert_fal_balance(job["user_id"], str(error or "")))
+                            await bot.send_message(chat_id=job["user_id"], text="🔧 Технические неполадки, скоро все исправим! Ваши токены не списались зря, они в безопасности.")
+                        else:
+                            await bot.send_message(chat_id=job["user_id"], text=f"⚠️ Ошибка NanoBanana: {error}")
                         continue
                     async with aiohttp.ClientSession() as session:
                         async with session.get(result_url) as resp:
                             img_bytes = await resp.read()
                     caption = f"🎭 *NanoBanana готово!*\n\n_{job['prompt'][:150]}_"
                     await send_photo_bytes(job["user_id"], img_bytes, caption, filename="nano_banana.jpg")
-                    db.update_nano_banana_job_status(job["id"], "completed")
-                    db.record_tool_usage(job["user_id"], job.get("username", ""), "nano_banana")
+                    await db.update_nano_banana_job_status(job["id"], "completed")
+                    await db.record_tool_usage(job["user_id"], job.get("username", ""), "nano_banana")
                 except Exception as e:
-                    db.update_nano_banana_job_status(job["id"], "failed", error_message=str(e))
+                    await db.update_nano_banana_job_status(job["id"], "failed", error_message=str(e))
                     logger.error(f"NanoBanana job {job['id']} failed: {e}")
         except Exception as e:
             logger.error(f"NanoBanana queue error: {e}")
@@ -355,27 +365,28 @@ async def process_nano_banana_job_queue():
 
 
 async def process_photosession_queue():
-    db = Database()
+    from utils_alerts import is_fal_balance_error, alert_fal_balance
+    db = AsyncDatabase()
     while True:
         try:
-            jobs = db.get_pending_photosession_jobs(limit=1)
+            jobs = await db.get_pending_photosession_jobs(limit=1)
             for job in jobs:
                 try:
-                    db.update_photosession_job_status(job["id"], "processing")
+                    await db.update_photosession_job_status(job["id"], "processing")
                     photo_paths = [p.strip() for p in (job.get("photo_paths") or "").split(",") if p.strip()]
                     from utils_fal import generate_photosession
-                    loop = asyncio.get_event_loop()
-                    result_urls, error = await loop.run_in_executor(
-                        None,
-                        lambda: asyncio.run(generate_photosession(
-                            photo_paths=photo_paths,
-                            style_prompt=job["style_prompt"],
-                            trigger_phrase="photo",
-                        ))
+                    result_urls, error = await generate_photosession(
+                        photo_paths=photo_paths,
+                        style_prompt=job["style_prompt"],
+                        trigger_phrase="photo",
                     )
                     if error or not result_urls:
-                        db.update_photosession_job_status(job["id"], "failed", error_message=error or "failed")
-                        await bot.send_message(chat_id=job["user_id"], text=f"⚠️ Ошибка фотосессии: {error}")
+                        await db.update_photosession_job_status(job["id"], "failed", error_message=error or "failed")
+                        if is_fal_balance_error(str(error or "")):
+                            asyncio.create_task(alert_fal_balance(job["user_id"], str(error or "")))
+                            await bot.send_message(chat_id=job["user_id"], text="🔧 Технические неполадки, скоро все исправим! Ваши токены не списались зря, они в безопасности.")
+                        else:
+                            await bot.send_message(chat_id=job["user_id"], text=f"⚠️ Ошибка фотосессии: {error}")
                         continue
                     await bot.send_message(
                         chat_id=job["user_id"],
@@ -387,10 +398,10 @@ async def process_photosession_queue():
                             async with session.get(url) as resp:
                                 img_bytes = await resp.read()
                         await send_photo_bytes(job["user_id"], img_bytes, filename="photosession.jpg")
-                    db.update_photosession_job_status(job["id"], "completed")
-                    db.record_tool_usage(job["user_id"], job.get("username", ""), "photosession")
+                    await db.update_photosession_job_status(job["id"], "completed")
+                    await db.record_tool_usage(job["user_id"], job.get("username", ""), "photosession")
                 except Exception as e:
-                    db.update_photosession_job_status(job["id"], "failed", error_message=str(e))
+                    await db.update_photosession_job_status(job["id"], "failed", error_message=str(e))
                     logger.error(f"Photosession job {job['id']} failed: {e}")
         except Exception as e:
             logger.error(f"Photosession queue error: {e}")
@@ -398,29 +409,30 @@ async def process_photosession_queue():
 
 
 async def process_avatar_training_queue():
-    db = Database()
+    from utils_alerts import is_fal_balance_error, alert_fal_balance
+    db = AsyncDatabase()
     while True:
         try:
-            jobs = db.get_pending_avatar_training_jobs(limit=1)
+            jobs = await db.get_pending_avatar_training_jobs(limit=1)
             for job in jobs:
                 try:
-                    db.update_avatar_training_job_status(job["id"], "processing")
+                    await db.update_avatar_training_job_status(job["id"], "processing")
                     from utils_fal import train_flux_lora_avatar
-                    loop = asyncio.get_event_loop()
-                    lora_path, error = await loop.run_in_executor(
-                        None,
-                        lambda: asyncio.run(train_flux_lora_avatar(
-                            user_dir=job["user_dir"],
-                            trigger_phrase=job["trigger_phrase"],
-                        ))
+                    lora_path, error = await train_flux_lora_avatar(
+                        user_dir=job["user_dir"],
+                        trigger_phrase=job["trigger_phrase"],
                     )
                     if error or not lora_path:
-                        db.update_avatar_training_job_status(job["id"], "failed", error_message=error or "failed")
-                        await bot.send_message(chat_id=job["user_id"], text=f"⚠️ Ошибка обучения аватара: {error}")
+                        await db.update_avatar_training_job_status(job["id"], "failed", error_message=error or "failed")
+                        if is_fal_balance_error(str(error or "")):
+                            asyncio.create_task(alert_fal_balance(job["user_id"], str(error or "")))
+                            await bot.send_message(chat_id=job["user_id"], text="🔧 Технические неполадки, скоро все исправим! Ваши токены не списались зря, они в безопасности.")
+                        else:
+                            await bot.send_message(chat_id=job["user_id"], text=f"⚠️ Ошибка обучения аватара: {error}")
                         continue
-                    db.save_user_lora(job["user_id"], job["trigger_phrase"], lora_path)
-                    db.update_avatar_training_job_status(job["id"], "completed", lora_path=lora_path)
-                    db.record_tool_usage(job["user_id"], job.get("username", ""), "avatar_training")
+                    await db.save_user_lora(job["user_id"], job["trigger_phrase"], lora_path)
+                    await db.update_avatar_training_job_status(job["id"], "completed", lora_path=lora_path)
+                    await db.record_tool_usage(job["user_id"], job.get("username", ""), "avatar_training")
                     await bot.send_message(
                         chat_id=job["user_id"],
                         text=(
@@ -432,7 +444,7 @@ async def process_avatar_training_queue():
                         attachments=get_main_menu_kb(),
                     )
                 except Exception as e:
-                    db.update_avatar_training_job_status(job["id"], "failed", error_message=str(e))
+                    await db.update_avatar_training_job_status(job["id"], "failed", error_message=str(e))
                     logger.error(f"Avatar training job {job['id']} failed: {e}")
         except Exception as e:
             logger.error(f"Avatar training queue error: {e}")
@@ -440,25 +452,25 @@ async def process_avatar_training_queue():
 
 
 async def process_suno_job_queue():
-    db = Database()
+    db = AsyncDatabase()
     while True:
         try:
-            jobs = db.get_pending_suno_jobs(limit=1)
+            jobs = await db.get_pending_suno_jobs(limit=1)
             for job in jobs:
                 try:
-                    db.update_suno_job_status(job["id"], "processing")
+                    await db.update_suno_job_status(job["id"], "processing")
                     from utils_suno import generate_suno_music
                     audio_url, error = await generate_suno_music(job["prompt"])
                     if error or not audio_url:
-                        db.update_suno_job_status(job["id"], "failed", error_message=error or "failed")
+                        await db.update_suno_job_status(job["id"], "failed", error_message=error or "failed")
                         await bot.send_message(chat_id=job["user_id"], text=f"⚠️ Ошибка Suno: {error}")
                         continue
                     caption = f"🎵 *Suno музыка готова!*\n\n_{job['prompt'][:150]}_"
                     await send_audio_url(job["user_id"], audio_url, caption, "suno.mp3")
-                    db.update_suno_job_status(job["id"], "completed")
-                    db.record_tool_usage(job["user_id"], job.get("username", ""), "suno")
+                    await db.update_suno_job_status(job["id"], "completed")
+                    await db.record_tool_usage(job["user_id"], job.get("username", ""), "suno")
                 except Exception as e:
-                    db.update_suno_job_status(job["id"], "failed", error_message=str(e))
+                    await db.update_suno_job_status(job["id"], "failed", error_message=str(e))
                     logger.error(f"Suno job {job['id']} failed: {e}")
         except Exception as e:
             logger.error(f"Suno queue error: {e}")
@@ -470,12 +482,12 @@ async def process_ai_assistant_job_queue():
     from utils_ai_assistant import ask_chatgpt, process_voice_question, analyze_images_with_gpt4_vision, analyze_food_calories
     from texts import AI_ASSISTANT_CALORIE_RESULT
 
-    db = Database()
+    db = AsyncDatabase()
     await asyncio.sleep(random.uniform(2, 7))
 
     while True:
         try:
-            jobs = db.get_pending_ai_assistant_jobs(limit=1)
+            jobs = await db.get_pending_ai_assistant_jobs(limit=1)
             for job in jobs:
                 try:
                     answer = None
@@ -488,7 +500,7 @@ async def process_ai_assistant_job_queue():
                         if not job.get("transcribed_text"):
                             transcribed, answer, error = await process_voice_question(job["voice_path"])
                             if transcribed:
-                                db.update_ai_assistant_job_transcription(job["id"], transcribed)
+                                await db.update_ai_assistant_job_transcription(job["id"], transcribed)
                         else:
                             answer, error = await ask_chatgpt(job["transcribed_text"])
                     elif mode == "vision":
@@ -513,7 +525,7 @@ async def process_ai_assistant_job_queue():
                                     additional_info=nutrition_data.get("additional_info", ""),
                                 )
 
-                    db.update_ai_assistant_job_status(job["id"], "completed")
+                    await db.update_ai_assistant_job_status(job["id"], "completed")
 
                     if error or not answer:
                         await bot.send_message(
@@ -528,7 +540,7 @@ async def process_ai_assistant_job_queue():
                             format="markdown",
                         )
                 except Exception as e:
-                    db.update_ai_assistant_job_status(job["id"], "failed")
+                    await db.update_ai_assistant_job_status(job["id"], "failed")
                     logger.error(f"AI assistant job {job['id']} failed: {e}")
         except Exception as e:
             logger.error(f"AI assistant queue error: {e}")

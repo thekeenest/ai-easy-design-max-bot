@@ -8,12 +8,12 @@ import aiohttp
 from maxapi import Bot
 
 from config import config
-from database import Database
+from database_pg import AsyncDatabase
 from keyboards.menu import get_ai_mode_kb, get_cancel_kb, get_ai_ask_again_kb, get_main_menu_kb
 from state_manager import state_mgr
 
 logger = logging.getLogger(__name__)
-db = Database()
+db = AsyncDatabase()
 
 STATES = {
     "text": "ai:text",
@@ -46,7 +46,7 @@ async def show_ai_menu(chat_id: int, user_id: int, bot: Bot):
 
 
 async def handle_ai_mode(chat_id: int, user_id: int, mode: str, bot: Bot):
-    balance = db.get_balance(user_id)
+    balance = await db.get_balance(user_id)
     costs = {
         "text": config.AI_ASSISTANT_TEXT_COST,
         "voice": config.AI_ASSISTANT_VOICE_COST,
@@ -111,10 +111,10 @@ async def process_text_question(chat_id: int, user_id: int, username: str, quest
         await bot.send_message(chat_id=chat_id, text="Вопрос слишком длинный. Максимум 4000 символов.")
         return
     cost = config.AI_ASSISTANT_TEXT_COST  # 0 — free
-    if not db.check_and_deduct(user_id, cost, config.ADMIN_ID):
+    if not await db.check_and_deduct(user_id, cost, config.ADMIN_ID):
         await bot.send_message(chat_id=chat_id, text="❌ Недостаточно токенов.")
         return
-    db.add_ai_assistant_job(user_id=user_id, username=username, question=question, mode="text")
+    await db.add_ai_assistant_job(user_id=user_id, username=username, question=question, mode="text")
     await bot.send_message(
         chat_id=chat_id,
         text="⏳ Обрабатываю вопрос... Ответ придёт через несколько секунд.",
@@ -125,7 +125,7 @@ async def process_voice_message(chat_id: int, user_id: int, username: str, audio
     """Download voice from MAX, save, queue job."""
     state_mgr.clear(user_id)
     cost = config.AI_ASSISTANT_VOICE_COST
-    if not db.check_and_deduct(user_id, cost, config.ADMIN_ID):
+    if not await db.check_and_deduct(user_id, cost, config.ADMIN_ID):
         await bot.send_message(chat_id=chat_id, text=f"❌ Недостаточно токенов (нужно {cost}).")
         return
 
@@ -140,11 +140,11 @@ async def process_voice_message(chat_id: int, user_id: int, username: str, audio
                 else:
                     raise Exception(f"Download failed: {resp.status}")
     except Exception as e:
-        db.update_balance(user_id, cost)  # refund
+        await db.update_balance(user_id, cost)  # refund
         await bot.send_message(chat_id=chat_id, text=f"⚠️ Не удалось загрузить голосовое: {e}")
         return
 
-    db.add_ai_assistant_job(
+    await db.add_ai_assistant_job(
         user_id=user_id, username=username, question="[voice]",
         mode="voice", voice_path=voice_path,
     )
@@ -214,11 +214,11 @@ async def process_vision_prompt(chat_id: int, user_id: int, username: str, quest
     data = state_mgr.get_data(user_id)
     photos = data.get("vision_photos", [])
     cost = config.AI_ASSISTANT_VISION_COST
-    if not db.check_and_deduct(user_id, cost, config.ADMIN_ID):
+    if not await db.check_and_deduct(user_id, cost, config.ADMIN_ID):
         await bot.send_message(chat_id=chat_id, text=f"❌ Недостаточно токенов (нужно {cost}).")
         return
     image_paths_str = ",".join(photos)
-    db.add_ai_assistant_job(
+    await db.add_ai_assistant_job(
         user_id=user_id, username=username, question=question,
         mode="vision", image_paths=image_paths_str,
     )
@@ -231,7 +231,7 @@ async def process_vision_prompt(chat_id: int, user_id: int, username: str, quest
 async def process_calorie_photo(chat_id: int, user_id: int, username: str, photo_url: str, bot: Bot):
     state_mgr.clear(user_id)
     cost = config.AI_ASSISTANT_CALORIE_COST
-    if not db.check_and_deduct(user_id, cost, config.ADMIN_ID):
+    if not await db.check_and_deduct(user_id, cost, config.ADMIN_ID):
         await bot.send_message(chat_id=chat_id, text=f"❌ Недостаточно токенов (нужно {cost}).")
         return
 
@@ -243,11 +243,11 @@ async def process_calorie_photo(chat_id: int, user_id: int, username: str, photo
                 with open(img_path, "wb") as f:
                     f.write(await resp.read())
     except Exception as e:
-        db.update_balance(user_id, cost)
+        await db.update_balance(user_id, cost)
         await bot.send_message(chat_id=chat_id, text=f"⚠️ Не удалось загрузить фото: {e}")
         return
 
-    db.add_ai_assistant_job(
+    await db.add_ai_assistant_job(
         user_id=user_id, username=username, question="[calorie]",
         mode="calorie", image_paths=img_path,
     )

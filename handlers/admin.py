@@ -4,10 +4,10 @@ Admin commands for MAX bot.
 from maxapi import Bot
 
 from config import config
-from database import Database
+from database_pg import AsyncDatabase
 from state_manager import state_mgr
 
-db = Database()
+db = AsyncDatabase()
 
 STATES = {
     "promo_code": "admin:promo_code",
@@ -25,7 +25,7 @@ def is_admin(user_id: int) -> bool:
 async def cmd_admin(chat_id: int, user_id: int, bot: Bot):
     if not is_admin(user_id):
         return
-    stats = db.get_stats()
+    stats = await db.get_stats()
     text = (
         "🛠 *Админ панель*\n\n"
         f"👤 Пользователей: `{stats.get('total_users', 0)}`\n"
@@ -44,7 +44,7 @@ async def cmd_admin(chat_id: int, user_id: int, bot: Bot):
 async def cmd_admin_promo(chat_id: int, user_id: int, bot: Bot):
     if not is_admin(user_id):
         return
-    promo_codes = db.list_promo_codes()
+    promo_codes = await db.list_promo_codes()
     if not promo_codes:
         await bot.send_message(chat_id=chat_id, text="📋 Промокодов нет.")
         return
@@ -69,7 +69,7 @@ async def handle_create_promo(chat_id: int, user_id: int, code: str, amount_str:
         await bot.send_message(chat_id=chat_id, text="❌ Неверное количество токенов.")
         return
     code = code.strip().upper()
-    if db.add_promo_code(code, amount):
+    if await db.add_promo_code(code, amount):
         await bot.send_message(
             chat_id=chat_id,
             text=f"✅ Промокод *{code}* создан — {amount} токенов.",
@@ -82,7 +82,7 @@ async def handle_create_promo(chat_id: int, user_id: int, code: str, amount_str:
 async def handle_delete_promo(chat_id: int, user_id: int, code: str, bot: Bot):
     if not is_admin(user_id):
         return
-    if db.delete_promo_code(code.strip().upper()):
+    if await db.delete_promo_code(code.strip().upper()):
         await bot.send_message(chat_id=chat_id, text=f"✅ Промокод удалён.")
     else:
         await bot.send_message(chat_id=chat_id, text=f"❌ Промокод не найден.")
@@ -97,8 +97,8 @@ async def handle_add_balance(chat_id: int, user_id: int, target_id_str: str, amo
     except ValueError:
         await bot.send_message(chat_id=chat_id, text="❌ Неверные параметры.\nФормат: /admin_balance USER_ID AMOUNT")
         return
-    db.update_balance(target_id, amount)
-    new_balance = db.get_balance(target_id)
+    await db.update_balance(target_id, amount)
+    new_balance = await db.get_balance(target_id)
     await bot.send_message(
         chat_id=chat_id,
         text=f"✅ Пользователю `{target_id}` добавлено *{amount}* токенов.\nНовый баланс: *{new_balance}*",
@@ -109,7 +109,7 @@ async def handle_add_balance(chat_id: int, user_id: int, target_id_str: str, amo
 async def handle_broadcast(chat_id: int, user_id: int, text_to_send: str, bot: Bot):
     if not is_admin(user_id):
         return
-    users = db.get_all_users()
+    users = await db.get_all_users()
     sent = 0
     failed = 0
     for u in users:
@@ -127,7 +127,7 @@ async def handle_broadcast(chat_id: int, user_id: int, text_to_send: str, bot: B
 async def cmd_stats(chat_id: int, user_id: int, bot: Bot):
     if not is_admin(user_id):
         return
-    stats = db.get_stats()
+    stats = await db.get_stats()
     text = (
         "📊 *Статистика*\n\n"
         f"👤 Всего пользователей: `{stats.get('total_users', 0)}`\n"

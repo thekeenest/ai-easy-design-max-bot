@@ -7,11 +7,11 @@ import aiohttp
 from maxapi import Bot
 
 from config import config
-from database import Database
+from database_pg import AsyncDatabase
 from keyboards.menu import get_cancel_kb, get_avatar_menu_kb, get_main_menu_kb
 from state_manager import state_mgr
 
-db = Database()
+db = AsyncDatabase()
 
 MIN_PHOTOS = 5
 MAX_PHOTOS = 20
@@ -22,7 +22,7 @@ STATES = {
 
 
 async def show_avatar_start(chat_id: int, user_id: int, bot: Bot):
-    balance = db.get_balance(user_id)
+    balance = await db.get_balance(user_id)
     cost = config.AVATAR_TRAINING_COST
     if balance < cost:
         await bot.send_message(
@@ -118,7 +118,7 @@ async def handle_trigger_phrase(chat_id: int, user_id: int, username: str, trigg
         await bot.send_message(chat_id=chat_id, text="❌ Фото не найдены.")
         return
     cost = config.AVATAR_TRAINING_COST
-    if not db.check_and_deduct(user_id, cost, config.ADMIN_ID):
+    if not await db.check_and_deduct(user_id, cost, config.ADMIN_ID):
         await bot.send_message(chat_id=chat_id, text=f"❌ Недостаточно токенов (нужно {cost}).")
         return
 
@@ -130,12 +130,12 @@ async def handle_trigger_phrase(chat_id: int, user_id: int, username: str, trigg
             import shutil
             shutil.copy2(path, dest)
 
-    db.add_avatar_training_job(
+    await db.add_avatar_training_job(
         user_id=user_id, username=username,
         trigger_phrase=trigger.strip(),
         user_dir=user_dir,
     )
-    balance_after = db.get_balance(user_id)
+    balance_after = await db.get_balance(user_id)
     await bot.send_message(
         chat_id=chat_id,
         text=(

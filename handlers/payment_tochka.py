@@ -7,7 +7,7 @@ import logging
 from maxapi import Bot
 
 from config import config
-from database import Database
+from database_pg import AsyncDatabase
 from keyboards.menu import get_packages_kb, get_pay_link_kb, get_check_again_kb, get_main_menu_kb
 from utils_tochka import (
     PAID_STATUSES,
@@ -17,7 +17,7 @@ from utils_tochka import (
 )
 
 logger = logging.getLogger(__name__)
-db = Database()
+db = AsyncDatabase()
 
 
 def build_packages_text() -> str:
@@ -46,7 +46,7 @@ def build_packages_text() -> str:
 
 
 async def show_packages(chat_id: int, user_id: int, bot: Bot):
-    db.add_user(user_id, str(user_id))
+    await db.add_user(user_id, str(user_id))
     await bot.send_message(
         chat_id=chat_id,
         text=build_packages_text(),
@@ -64,8 +64,8 @@ async def handle_package_selected(chat_id: int, user_id: int, package_id: str, b
     order_id = generate_order_id(user_id, package_id)
     description = f"{pkg['tokens']} токенов для MAX-бота"
 
-    db.add_user(user_id, str(user_id))
-    db.create_tochka_payment(
+    await db.add_user(user_id, str(user_id))
+    await db.create_tochka_payment(
         user_id=user_id,
         order_id=order_id,
         package_id=package_id,
@@ -86,12 +86,12 @@ async def handle_package_selected(chat_id: int, user_id: int, package_id: str, b
             chat_id=chat_id,
             text=f"⚠️ Не удалось создать платёж. Напишите в поддержку: {config.SUPPORT_USERNAME}",
         )
-        db.fail_tochka_payment(order_id, "init_failed")
+        await db.fail_tochka_payment(order_id, "init_failed")
         return
 
     operation_id = result["operationId"]
     payment_url = result["paymentUrl"]
-    db.update_tochka_operation_id(order_id, operation_id)
+    await db.update_tochka_operation_id(order_id, operation_id)
 
     await bot.send_message(
         chat_id=chat_id,
@@ -111,7 +111,7 @@ async def handle_package_selected(chat_id: int, user_id: int, package_id: str, b
 
 
 async def handle_check_payment(chat_id: int, user_id: int, order_id: str, bot: Bot):
-    payment = db.get_tochka_payment_by_order(order_id)
+    payment = await db.get_tochka_payment_by_order(order_id)
     if not payment:
         await bot.send_message(chat_id=chat_id, text="❌ Платёж не найден.")
         return
@@ -121,7 +121,7 @@ async def handle_check_payment(chat_id: int, user_id: int, order_id: str, bot: B
         return
 
     if payment["status"] == "paid":
-        balance = db.get_balance(user_id)
+        balance = await db.get_balance(user_id)
         await bot.send_message(
             chat_id=chat_id,
             text=f"✅ Оплата уже подтверждена!\n🪙 Ваш баланс: *{balance} токенов*",
@@ -154,8 +154,8 @@ async def handle_check_payment(chat_id: int, user_id: int, order_id: str, bot: B
     logger.info(f"Tochka check: order={order_id} status={tochka_status}")
 
     if tochka_status in PAID_STATUSES:
-        credited = db.confirm_tochka_payment(order_id)
-        balance = db.get_balance(user_id)
+        credited = await db.confirm_tochka_payment(order_id)
+        balance = await db.get_balance(user_id)
         if credited:
             await bot.send_message(
                 chat_id=chat_id,

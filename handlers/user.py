@@ -4,11 +4,11 @@ User profile, promo codes.
 from maxapi import Bot
 
 from config import config
-from database import Database
+from database_pg import AsyncDatabase
 from keyboards.menu import get_profile_kb, get_packages_kb, get_main_menu_kb
 from state_manager import state_mgr
 
-db = Database()
+db = AsyncDatabase()
 
 STATES = {
     "waiting_for_promo": "user:waiting_for_promo",
@@ -16,8 +16,8 @@ STATES = {
 
 
 async def show_profile(chat_id: int, user_id: int, bot: Bot):
-    db.add_user(user_id, str(user_id))
-    balance = db.get_balance(user_id)
+    await db.add_user(user_id, str(user_id))
+    balance = await db.get_balance(user_id)
     text = (
         "👤 *Профиль*\n\n"
         f"🆔 ID: `{user_id}`\n"
@@ -47,7 +47,7 @@ async def handle_enter_promo(chat_id: int, user_id: int, bot: Bot):
 async def process_promo_code(chat_id: int, user_id: int, text: str, bot: Bot):
     state_mgr.clear(user_id)
     promo_code = text.strip().upper()
-    promo_data = db.get_promo_code(promo_code)
+    promo_data = await db.get_promo_code(promo_code)
     if not promo_data:
         await bot.send_message(
             chat_id=chat_id,
@@ -56,9 +56,9 @@ async def process_promo_code(chat_id: int, user_id: int, text: str, bot: Bot):
         )
         return
     credit_amount = promo_data["amount"]
-    db.update_balance(user_id, credit_amount)
-    db.mark_promo_used(promo_code, user_id)
-    balance = db.get_balance(user_id)
+    await db.update_balance(user_id, credit_amount)
+    await db.mark_promo_used(promo_code, user_id)
+    balance = await db.get_balance(user_id)
     await bot.send_message(
         chat_id=chat_id,
         text=(

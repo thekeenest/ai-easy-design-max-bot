@@ -5,14 +5,14 @@ from maxapi import Bot
 from maxapi.types import MessageCreated, BotStarted, MessageCallback
 
 from config import config
-from database import Database
+from database_pg import AsyncDatabase
 from keyboards.menu import (
     get_main_menu_kb, get_photo_menu_kb, get_video_menu_kb,
     get_avatar_menu_kb, get_help_kb,
 )
 from state_manager import state_mgr
 
-db = Database()
+db = AsyncDatabase()
 
 WELCOME_TEXT = (
     "Добро пожаловать! 👋\n\n"
@@ -29,7 +29,7 @@ WELCOME_TEXT = (
 async def cmd_start(event: MessageCreated, bot: Bot):
     user_id = event.message.sender.user_id
     username = event.message.sender.name or str(user_id)
-    db.add_user(user_id, username)
+    await db.add_user(user_id, username)
     state_mgr.clear(user_id)
     await bot.send_message(
         chat_id=event.message.recipient.chat_id,
@@ -42,7 +42,7 @@ async def cmd_start(event: MessageCreated, bot: Bot):
 async def on_bot_started(event: BotStarted, bot: Bot):
     user_id = event.user.user_id
     username = event.user.name or str(user_id)
-    db.add_user(user_id, username)
+    await db.add_user(user_id, username)
     state_mgr.clear(user_id)
     await bot.send_message(
         chat_id=event.chat_id,

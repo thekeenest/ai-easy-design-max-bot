@@ -4,11 +4,11 @@ Suno AI music generation handler.
 from maxapi import Bot
 
 from config import config
-from database import Database
+from database_pg import AsyncDatabase
 from keyboards.menu import get_cancel_kb, get_main_menu_kb
 from state_manager import state_mgr
 
-db = Database()
+db = AsyncDatabase()
 
 STATES = {
     "prompt": "suno:prompt",
@@ -16,7 +16,7 @@ STATES = {
 
 
 async def show_suno_menu(chat_id: int, user_id: int, bot: Bot):
-    balance = db.get_balance(user_id)
+    balance = await db.get_balance(user_id)
     cost = config.SUNO_MUSIC_COST
     if balance < cost:
         await bot.send_message(
@@ -42,11 +42,11 @@ async def show_suno_menu(chat_id: int, user_id: int, bot: Bot):
 async def handle_suno_prompt(chat_id: int, user_id: int, username: str, prompt: str, bot: Bot):
     state_mgr.clear(user_id)
     cost = config.SUNO_MUSIC_COST
-    if not db.check_and_deduct(user_id, cost, config.ADMIN_ID):
+    if not await db.check_and_deduct(user_id, cost, config.ADMIN_ID):
         await bot.send_message(chat_id=chat_id, text=f"❌ Недостаточно токенов (нужно {cost}).")
         return
-    db.add_suno_job(user_id=user_id, username=username, prompt=prompt)
-    balance_after = db.get_balance(user_id)
+    await db.add_suno_job(user_id=user_id, username=username, prompt=prompt)
+    balance_after = await db.get_balance(user_id)
     await bot.send_message(
         chat_id=chat_id,
         text=(

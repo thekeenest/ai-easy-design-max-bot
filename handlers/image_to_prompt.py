@@ -7,17 +7,17 @@ import aiohttp
 from maxapi import Bot
 
 from config import config
-from database import Database
+from database_pg import AsyncDatabase
 from keyboards.menu import get_cancel_kb, get_photo_menu_kb
 from state_manager import state_mgr
 
-db = Database()
+db = AsyncDatabase()
 
 STATES = {"photo": "img2prompt:photo"}
 
 
 async def show_img2prompt_start(chat_id: int, user_id: int, bot: Bot):
-    balance = db.get_balance(user_id)
+    balance = await db.get_balance(user_id)
     cost = config.IMAGE_TO_PROMPT_COST
     if balance < cost:
         await bot.send_message(
@@ -41,7 +41,7 @@ async def show_img2prompt_start(chat_id: int, user_id: int, bot: Bot):
 async def handle_img2prompt_photo(chat_id: int, user_id: int, username: str, photo_url: str, bot: Bot):
     state_mgr.clear(user_id)
     cost = config.IMAGE_TO_PROMPT_COST
-    if not db.check_and_deduct(user_id, cost, config.ADMIN_ID):
+    if not await db.check_and_deduct(user_id, cost, config.ADMIN_ID):
         await bot.send_message(chat_id=chat_id, text=f"❌ Недостаточно токенов (нужно {cost}).")
         return
 
@@ -53,7 +53,7 @@ async def handle_img2prompt_photo(chat_id: int, user_id: int, username: str, pho
                 with open(img_path, "wb") as f:
                     f.write(await resp.read())
     except Exception as e:
-        db.update_balance(user_id, cost)
+        await db.update_balance(user_id, cost)
         await bot.send_message(chat_id=chat_id, text=f"⚠️ Не удалось загрузить фото: {e}")
         return
 
@@ -68,7 +68,7 @@ async def handle_img2prompt_photo(chat_id: int, user_id: int, username: str, pho
         )
         if error or not answer:
             raise Exception(error or "Empty response")
-        balance_after = db.get_balance(user_id)
+        balance_after = await db.get_balance(user_id)
         await bot.send_message(
             chat_id=chat_id,
             text=(
@@ -79,5 +79,5 @@ async def handle_img2prompt_photo(chat_id: int, user_id: int, username: str, pho
             format="markdown",
         )
     except Exception as e:
-        db.update_balance(user_id, cost)
+        await db.update_balance(user_id, cost)
         await bot.send_message(chat_id=chat_id, text=f"⚠️ Ошибка анализа: {e}")

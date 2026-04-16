@@ -144,9 +144,9 @@ For Tochka Bank acquiring approval, direct reviewers to send `/info` to the bot 
 
 | Package | Tokens | Price | Savings |
 |---------|--------|-------|---------|
-| 🌱 Стартовый | 100 | 249₽ | — |
-| ⭐ Оптимальный | 260 | 549₽ | 15% |
-| 💎 Продвинутый | 550 | 999₽ | 27% |
-| 👑 Максимум | 1000 | 1699₽ | 32% |
+| 🌱 Стартовый | 100 | 299₽ | — |
+| ⭐ Оптимальный | 200 | 499₽ | 16% |
+| 💎 Продвинутый | 500 | 1099₽ | 26% |
+| 👑 Максимум | 1000 | 1999₽ | 33% |
 
 AI text chat is **free** (unlimited). Tokens are used only for media generation.

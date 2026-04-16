@@ -7,11 +7,11 @@ import aiohttp
 from maxapi import Bot
 
 from config import config
-from database import Database
+from database_pg import AsyncDatabase
 from keyboards.menu import get_cancel_kb, get_video_menu_kb, get_kling_duration_kb, get_runway_aspect_kb
 from state_manager import state_mgr
 
-db = Database()
+db = AsyncDatabase()
 
 STATES = {
     "kling_photo": "video:kling_photo",
@@ -25,7 +25,7 @@ STATES = {
 # ── Kling ──────────────────────────────────────────────────────────────────────
 
 async def show_kling_start(chat_id: int, user_id: int, bot: Bot):
-    balance = db.get_balance(user_id)
+    balance = await db.get_balance(user_id)
     min_cost = config.GENERATE_VIDEO_COST_5_SEC
     if balance < min_cost:
         await bot.send_message(
@@ -83,7 +83,7 @@ async def handle_kling_duration(chat_id: int, user_id: int, username: str, durat
     prompt = data.get("kling_prompt", "")
     photo_path = data.get("kling_photo_path", "")
     cost = config.GENERATE_VIDEO_COST_5_SEC if duration == 5 else config.GENERATE_VIDEO_COST_10_SEC
-    balance = db.get_balance(user_id)
+    balance = await db.get_balance(user_id)
     if balance < cost:
         await bot.send_message(
             chat_id=chat_id,
@@ -91,14 +91,14 @@ async def handle_kling_duration(chat_id: int, user_id: int, username: str, durat
             format="markdown",
         )
         return
-    if not db.check_and_deduct(user_id, cost, config.ADMIN_ID):
+    if not await db.check_and_deduct(user_id, cost, config.ADMIN_ID):
         await bot.send_message(chat_id=chat_id, text="❌ Ошибка списания токенов.")
         return
-    db.add_video_job(
+    await db.add_video_job(
         user_id=user_id, username=username, prompt=prompt,
         duration=duration, image_path=photo_path,
     )
-    balance_after = db.get_balance(user_id)
+    balance_after = await db.get_balance(user_id)
     await bot.send_message(
         chat_id=chat_id,
         text=(
@@ -114,7 +114,7 @@ async def handle_kling_duration(chat_id: int, user_id: int, username: str, durat
 # ── Runway ─────────────────────────────────────────────────────────────────────
 
 async def show_runway_start(chat_id: int, user_id: int, bot: Bot):
-    balance = db.get_balance(user_id)
+    balance = await db.get_balance(user_id)
     cost = config.RUNWAY_VIDEO_COST
     if balance < cost:
         await bot.send_message(
@@ -170,14 +170,14 @@ async def handle_runway_prompt(chat_id: int, user_id: int, username: str, prompt
     photo_path = data.get("runway_photo_path", "")
     aspect = data.get("runway_aspect", "16:9")
     cost = config.RUNWAY_VIDEO_COST
-    if not db.check_and_deduct(user_id, cost, config.ADMIN_ID):
+    if not await db.check_and_deduct(user_id, cost, config.ADMIN_ID):
         await bot.send_message(chat_id=chat_id, text=f"❌ Недостаточно токенов (нужно {cost}).")
         return
-    db.add_runway_video_job(
+    await db.add_runway_video_job(
         user_id=user_id, username=username, prompt=prompt,
         image_path=photo_path, aspect_ratio=aspect,
     )
-    balance_after = db.get_balance(user_id)
+    balance_after = await db.get_balance(user_id)
     await bot.send_message(
         chat_id=chat_id,
         text=(
@@ -192,7 +192,7 @@ async def handle_runway_prompt(chat_id: int, user_id: int, username: str, prompt
 # ── VEO3 ───────────────────────────────────────────────────────────────────────
 
 async def show_veo3_start(chat_id: int, user_id: int, bot: Bot):
-    balance = db.get_balance(user_id)
+    balance = await db.get_balance(user_id)
     cost = config.VEO3_VIDEO_COST
     if balance < cost:
         await bot.send_message(
@@ -216,11 +216,11 @@ async def show_veo3_start(chat_id: int, user_id: int, bot: Bot):
 async def handle_veo3_prompt(chat_id: int, user_id: int, username: str, prompt: str, bot: Bot):
     state_mgr.clear(user_id)
     cost = config.VEO3_VIDEO_COST
-    if not db.check_and_deduct(user_id, cost, config.ADMIN_ID):
+    if not await db.check_and_deduct(user_id, cost, config.ADMIN_ID):
         await bot.send_message(chat_id=chat_id, text=f"❌ Недостаточно токенов (нужно {cost}).")
         return
-    db.add_veo3_video_job(user_id=user_id, username=username, prompt=prompt)
-    balance_after = db.get_balance(user_id)
+    await db.add_veo3_video_job(user_id=user_id, username=username, prompt=prompt)
+    balance_after = await db.get_balance(user_id)
     await bot.send_message(
         chat_id=chat_id,
         text=(
