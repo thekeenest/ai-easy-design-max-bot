@@ -32,7 +32,7 @@ async def show_ai_menu(chat_id: int, user_id: int, bot: Bot):
         "🤖 *AI Assistant*\n\n"
         "Ваш умный помощник на базе ChatGPT!\n\n"
         "💬 *Возможности:*\n"
-        f"• Текстовые вопросы — бесплатно 🆓\n"
+        f"• Текстовые вопросы — {config.AI_ASSISTANT_TEXT_COST} токена\n"
         f"• Голосовые вопросы — {config.AI_ASSISTANT_VOICE_COST} токенов\n"
         f"• Анализ фото — {config.AI_ASSISTANT_VISION_COST} токенов\n"
         f"• Анализ калорий — {config.AI_ASSISTANT_CALORIE_COST} токенов\n\n"

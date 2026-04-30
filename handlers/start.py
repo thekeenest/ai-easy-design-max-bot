@@ -21,7 +21,7 @@ WELCOME_TEXT = (
     "🎬 *AI видео:* VEO3 · Runway · Kling v2.1\n"
     "🎭 *Аватары:* Flux LoRA\n"
     "🎵 *Музыка:* Suno AI\n"
-    "🤖 *AI чат:* ChatGPT (бесплатно)\n\n"
+    "🤖 *AI чат:* ChatGPT\n\n"
     "Выберите раздел:"
 )
 
